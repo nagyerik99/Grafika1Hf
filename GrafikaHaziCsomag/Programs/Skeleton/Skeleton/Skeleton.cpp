@@ -105,11 +105,6 @@ public:
 
 Camera2D* camera;
 
-class Intersectable {
-public:
-	virtual std::vector<vec2> Intersect(Intersectable object) = 0;
-};
-
 class ControlPoint {
 private:
 	bool selected;
@@ -128,8 +123,12 @@ public:
 		return wPos;
 	}
 
-	void Selected(bool val) {
+	void setSelected(bool val) {
 		selected = val;
+	}
+	
+	bool getSelected() {
+		return selected;
 	}
 	
 	vec3 getColor() {
@@ -146,35 +145,33 @@ private:
 	vec3 color;
 	ControlPoint* wPointA, * wPointB;
 	vec3 equation;
-	std::vector<vec2> endPoints = std::vector<vec2>();
+	std::vector<vec2> points = std::vector<vec2>();
+	bool selected;
 
-	void CalcEndPoints() {
-		endPoints.clear();
-		float x;
+	void CalcPoints() {
+		points.clear();
+		float x = -5.0f;
 		float y;
-		if (equation.x != 0 && equation.y != 0) {
-			y = (float)(equation.z - (equation.x * -5.0f)) / equation.y;
-			float yRight = (float)(equation.z - (equation.x * 5.0f)) / equation.y;
-
-			endPoints.push_back(vec2(-5.0f, y));
-			endPoints.push_back(vec2(5.0f, yRight));
-		}
-		else if (equation.x == 0 && equation.y != 0) {
-			y = (float)(equation.z / equation.y);
-			x = 5.0f;
-			endPoints.push_back(vec2(x, y));
-			endPoints.push_back(vec2(-x, y));
-		}
-		else if (equation.y == 0 && equation.x != 0) {
-			x = (float)(equation.z / equation.x);
-			y = 5.0f;
-			endPoints.push_back(vec2(x, y));
-			endPoints.push_back(vec2(x, -y));
+		for (int i = 0; i < 110; i++)
+		{
+			if (equation.y != 0) {
+				y = (equation.z - (equation.x * x)) / equation.y;
+			}
+			else {
+				y = 0;
+			}
+			points.push_back(vec2(x, y));
+			x += i* 0.1f;
 		}
 	}
 
 public:
+	std::vector<vec2> getPoints() {
+		return points;
+	}
+
 	Line(ControlPoint* A, ControlPoint* B, vec3 col) {
+		selected = false;
 		color = col;
 		wPointA = A;
 		wPointB = B;
@@ -182,9 +179,10 @@ public:
 		vec2 b = B->getPosition();
 		vec2 ab = b - a;
 		vec2 normal = vec2(-ab.y, ab.x);
-		float point = normal.x * a.x + normal.y * a.y;
+		float point = normal.x * b.x + normal.y * b.y;
+
 		equation = vec3(normal.x, normal.y, point);
-		CalcEndPoints();
+		CalcPoints();
 		this->Create();
 	}
 
@@ -204,13 +202,16 @@ public:
 		mat4 MVP = camera->P() * camera->V();
 		gpuProgram.setUniform(MVP, "MVP");
 		std::vector<vec3> colors;
+		std::vector<vec2> endPoints;
+		endPoints.push_back(points[0]);
+		endPoints.push_back(points[points.size()-1]);
 		glBindVertexArray(this->vaoLine);
 
 		for (int i = 0; i < endPoints.size(); i++)
-			colors.push_back(LineColor);
+			colors.push_back(this->getColor());
 
 		glBindBuffer(GL_ARRAY_BUFFER, vboLine[0]);
-		glBufferData(GL_ARRAY_BUFFER, endPoints.size() * sizeof(vec2), &endPoints[0], GL_STATIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(vec2), &endPoints[0], GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, vboLine[1]);
 		glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(vec3), &colors[0], GL_STATIC_DRAW);
 		glDrawArrays(GL_LINES, 0, endPoints.size());
@@ -218,19 +219,54 @@ public:
 
 	}
 
-	
+	bool Pick(float cX, float cY) {
+		if (selected) return false;
+
+		vec4 wPoint4 = vec4(cX, cY, 0, 1) * camera->Pinv() * camera->Vinv();
+		float val2 = powf(equation.x * wPoint4.x + equation.y * wPoint4.y - equation.z,2.0f);
+		float absVal = sqrtf(val2);
+
+		if (absVal <= 0.1f) {
+			printf("absval: %f", absVal);
+			selected = true;
+		}
+
+		return selected;
+	}
+
+	void setSelected(bool val) {
+		selected = val;
+	}
+
+	bool getSelected() {
+		return selected;
+	}
+
+	vec3 getColor() {
+		if (selected) return SelectColor;
+
+		return LineColor;
+	}
+
+	vec3 GetEquation() {
+		return equation;
+	}
+
 };
 
-class Circle{
+class Circle {
 private:
 	unsigned int vaoCircle;
 	unsigned int vboCircle[2];
 	ControlPoint* wCenterPoint;
 	float Radius;
+	bool selected;
+	vec3 equation;
+	vec3 color;
 	std::vector<vec2> points;
 
 	void CalcPoints() {
-		int numofIteration = 150;
+		int numofIteration = 100;
 		vec2 center = wCenterPoint->getPosition();
 
 		for (size_t i = 0; i < numofIteration; i++)
@@ -242,9 +278,19 @@ private:
 		}
 	}
 public:
+
+	std::vector<vec2> getPoints() {
+		return points;
+	}
+
 	Circle(ControlPoint* center, float R) {
+		selected = false;
+		color = CircleColor;
 		wCenterPoint = center;
+		vec2 wCenter = center->getPosition();
 		Radius = R;
+		float R2 = R * R;
+		equation = vec3(wCenter.x, wCenter.y, R2);
 		this->Create();
 		this->CalcPoints();
 	}
@@ -266,9 +312,7 @@ public:
 		std::vector<vec3> colors;
 
 		for (int i = 0; i < points.size(); i++)
-			colors.push_back(CircleColor);
-		//points.push_back(points[0]);
-		//colors.push_back(CircleColor);
+			colors.push_back(this->getColor());
 
 		glBindBuffer(GL_ARRAY_BUFFER, vboCircle[0]);
 		glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(vec2), &points[0], GL_STATIC_DRAW);
@@ -276,6 +320,43 @@ public:
 		glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(vec3), &colors[0], GL_STATIC_DRAW);
 		glDrawArrays(GL_LINE_LOOP, 0, points.size());
 
+	}
+
+	bool Pick(float cX, float cY) {
+		if (selected) return false;
+
+		vec4 wPoint4 = vec4(cX, cY, 0, 1) * camera->Pinv() * camera->Vinv();
+		float xu = wPoint4.x - equation.x;
+		float yv = wPoint4.y - equation.y;
+		float val2 = powf(((xu * xu) + (yv * yv) - equation.z),2.0f);
+		float absVal = sqrtf(val2);
+
+		if (absVal <= 0.1f) {
+			printf("absval Circle: %f", absVal);
+			selected = true;
+			color = SelectColor;
+			return true;
+		}
+
+		return false;
+	}
+
+	void setSelected(bool val) {
+		selected = val;
+	}
+
+	bool getSelected() {
+		return selected;
+	}
+
+	vec3 getColor() {
+		if (selected) return SelectColor;
+
+		return CircleColor;
+	}
+
+	vec3 GetEquation() {
+		return equation;
 	}
 };
 
@@ -287,11 +368,23 @@ private:
 	std::vector<ControlPoint*> controlPoints;
 	std::vector<Line*> lines;
 	std::vector<Circle*> circles;
+
+	bool Picked(ControlPoint* cPoint, vec2 wPoint) {
+		vec2 pos = cPoint->getPosition();
+		vec2 section = pos - wPoint;
+		if (length(section) <= 0.1f) {
+			return true;
+		}
+
+		return false;
+	}
 public:
 	char DrawingState;
 	float Distance = -1.0f;
 	std::vector<ControlPoint*> selectedPoints;
-public:
+	std::vector<Line*> selectedLines;
+	std::vector<Circle*> selectedCircles;
+	int selectedObjects=0;
 	Paper(vec2 size) {
 		float cX = windowWidth / windowWidth - 1;	
 		float cY = 1.0f - windowWidth / windowHeight;
@@ -353,30 +446,109 @@ public:
 
 		for each (ControlPoint* cPoint in controlPoints)
 		{
-			vec2 pos = cPoint->getPosition();
-			vec2 section = pos - wPoint;
-			if (length(section) <= 0.1f) {
-				cPoint->Selected(true);
+			if (Picked(cPoint, wPoint) && !cPoint->getSelected()) {
+				cPoint->setSelected(true);
 				selectedPoints.push_back(cPoint);
-				return;
 			}
 		}
 
 		glutPostRedisplay();
 	}
 
+	//TODO: megvizsgálni miért nem intersectel és több elem kiválasztása ?!
+	void SelectObject(float cX, float cY) {
+		for each (Line * line in lines) {
+			if (line->Pick(cX, cY)) {
+				this->selectedObjects++;
+				selectedLines.push_back(line);
+			}
+		}
+
+		for each (Circle * circle in circles) {
+			if (circle->Pick(cX, cY)) {
+				this->selectedObjects++;
+				selectedCircles.push_back(circle);
+			}
+		}
+	}
+
 	void ClearSelection() {
 		for each (ControlPoint* point in selectedPoints)
-		{
-			point->Selected(false);
-		}
+			point->setSelected(false);
+		
+		for each (Line * object in selectedLines)
+			object->setSelected(false);
+
+		for each (Circle * object in selectedCircles)
+			object->setSelected(false);
+
 		selectedPoints.clear();
-		glutPostRedisplay();
+		selectedCircles.clear();
+		selectedLines.clear();
+		selectedObjects = 0;
 	}
 
 	void AddCircle(Circle* circle) {
 		circles.push_back(circle);
-		glutPostRedisplay();
+	}
+
+	void AddLine(Line* line) {
+		lines.push_back(line);
+	}
+
+	void AddControlPoint(vec2 point) {
+		for each (ControlPoint * controlPoint in controlPoints) {
+			if (Picked(controlPoint, point)) return;
+		}
+		controlPoints.push_back(new ControlPoint(point, PointColor));
+	}
+
+	void Intersect(Line* line1, Line* line2) {
+		std::vector<vec2> points = line2->getPoints();
+		vec3 equation = line1->GetEquation();
+
+		for (int i = 0; i < points.size(); i++) {
+			float nxX = equation.x * points[i].x;
+			float nyY = equation.y * points[i].y;
+			float val = nxX + nyY - equation.z;
+			float val2 = val * val;
+			float absVal = sqrtf(val2);
+
+			if (absVal <= 0.05f)
+				AddControlPoint(points[i]);
+		}
+	}
+
+	void Intersect(Line* line, Circle* circle) {
+		vec3 equation2 = line->GetEquation();
+		std::vector<vec2> points = circle->getPoints();
+
+		for each (vec2 point in points)
+		{
+			float val2 = powf((equation2.x * point.x) + (equation2.y * point.y) - equation2.z, 2.0f);
+			float absVal = sqrtf(val2);
+
+			if (absVal <= 0.05f) {
+				AddControlPoint(point);
+			}
+		}
+	}
+
+	void Intersect(Circle* circle1, Circle* circle2) {
+		vec3 equation2 = circle2->GetEquation();
+		std::vector<vec2> points = circle1->getPoints();
+		for each (vec2 point in points)
+		{
+			float xu = point.x - equation2.x;
+			float yv = point.y - equation2.y;
+			float val2 = powf(((xu * xu) + (yv * yv) - equation2.z), 2.0f);
+			float absVal = sqrtf(val2);
+
+			if (absVal <= 0.05f) {
+				AddControlPoint(point);
+			}
+
+		}
 	}
 
 };
@@ -388,30 +560,11 @@ Paper* paper;
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	glPointSize(10.0f);
-	glLineWidth(5.0f);
+	glLineWidth(3.0f);
 
 	camera = new Camera2D(10, 10,vec2(0, 0));
 	paper = new Paper(vec2(10, 10));
 
-	//glGenVertexArrays(1, &vao);	// get 1 vao id
-	//glBindVertexArray(vao);		// make it active
-
-	//unsigned int vbo;		// vertex buffer object
-	//glGenBuffers(1, &vbo);	// Generate 1 buffer
-	//glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	//// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	//float vertices[] = { 0.0f, 0.0f, 1.0f, 3.0f};
-	//glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-	//	sizeof(vertices),  // # bytes
-	//	vertices,	      	// address
-	//	GL_STATIC_DRAW);	// we do not change later
-
-	//glEnableVertexAttribArray(0);  // AttribArray 0
-	//glVertexAttribPointer(0,       // vbo -> AttribArray 0
-	//	2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-	//	0, NULL); 		     // stride, offset: tightly packed
-
-	//// create program for the GPU
 	gpuProgram.create(vertexSource, fragmentSource, "outColor");
 }
 
@@ -421,22 +574,6 @@ void onDisplay() {
 	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
 
 	paper->Draw();
-
-
-	// Set color to (0, 1, 0) = green
-	//int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	//glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
-
-	//float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-	//						  0, 1, 0, 0,    // row-major!
-	//						  0, 0, 1, 0,
-	//						  0, 0, 0, 1 };
-
-	//location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	//glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-
-	//glBindVertexArray(vao);  // Draw call
-	//glDrawArrays(GL_LINES, 0 /*startIdx*/, 1 /*# Elements*/);
 
 	glutSwapBuffers(); // exchange buffers for double buffering
 }
@@ -471,7 +608,6 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 	// Convert to normalized device space
 	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
 	float cY = 1.0f - 2.0f * pY / windowHeight;
-
 //	char * buttonStat;
 	switch (state) {
 	case GLUT_DOWN:
@@ -486,6 +622,7 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 				paper->Distance = length(section);
 				printf("Distance Taken: %f", paper->Distance);
 			}
+			glutPostRedisplay();
 			break;
 		case 'c':
 			if (paper->Distance >= 0) {
@@ -493,18 +630,41 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 				if (paper->selectedPoints.size() == 1) {
 					paper->AddCircle(new Circle(paper->selectedPoints[0], paper->Distance));
 					paper->ClearSelection();
+					glutPostRedisplay();
 				}
 			}
 			break;
-		}
-	break;// buttonStat = "pressed"; break;
-	//case GLUT_UP:   buttonStat = "released"; break;
-	}
+		case 'i':
+			paper->SelectObject(cX, cY);
 
-	//switch (button) {
-	//case GLUT_LEFT_BUTTON:   printf("Left button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);   break;
-	//case GLUT_MIDDLE_BUTTON: printf("Middle button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY); break;
-	//case GLUT_RIGHT_BUTTON:  printf("Right button %s at (%3.2f, %3.2f)\n", buttonStat, cX, cY);  break;
+			if (paper->selectedObjects == 2) {
+
+				if (paper->selectedLines.size() == 1) {
+					paper->Intersect(paper->selectedLines[0], paper->selectedCircles[0]);
+				}
+				else if (paper->selectedLines.size() == 0) {
+					paper->Intersect(paper->selectedCircles[0], paper->selectedCircles[1]);
+				}
+				else {
+					paper->Intersect(paper->selectedLines[0], paper->selectedLines[1]);
+				}
+				paper->ClearSelection();
+			}
+			glutPostRedisplay();
+			break;
+		case 'l':
+			paper->SelectPoint(cX, cY);
+
+			if (paper->selectedPoints.size() == 2) {
+				paper->AddLine(new Line(paper->selectedPoints[0], paper->selectedPoints[1], LineColor));
+				paper->ClearSelection();
+			}
+			glutPostRedisplay();
+
+			break;
+		}
+	break;
+	}
 }
 
 // Idle event indicating that some time elapsed: do animation here
