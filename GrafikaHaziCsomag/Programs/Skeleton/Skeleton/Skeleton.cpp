@@ -65,8 +65,6 @@ const char * const fragmentSource = R"(
 
 
 GPUProgram gpuProgram; // vertex and fragment shaders
-//unsigned int vao;	   // virtual world on the GPU
-
 vec3 LineColor(1.0f, 0.0f, 0.0f);
 vec3 PointColor(1.0f, 1.0f, 0.0f);
 vec3 CircleColor(0.0f, 1.0f, 1.0f);
@@ -78,11 +76,7 @@ private:
 	float wScreenHeight;
 	vec2 wCenter;
 public:
-	Camera2D(int widht, int height, vec2 center) {
-		wScreenWidht = widht;
-		wScreenHeight = height;
-		wCenter = center;
-	};
+	Camera2D(int widht, int height, vec2 center) : wCenter(center), wScreenWidht(widht), wScreenHeight(height) {}
 
 	mat4 V() {
 		return  TranslateMatrix(-wCenter);
@@ -99,25 +93,69 @@ public:
 
 	mat4 Pinv() {
 		return  ScaleMatrix(vec2(wScreenWidht / 2, wScreenHeight / 2));
-
 	};
 };
 
 Camera2D* camera;
 
+
+class Object {
+protected:
+	vec3 color;
+	vec3 equation;
+	std::vector<vec2> points;
+	bool selected = false;
+public:
+	Object(vec3 col, bool sel) :color(col),selected(sel) {}
+
+	std::vector<vec2> getPoints() {
+		return points;
+	}
+
+	void setSelected(bool val) {
+		selected = val;
+	}
+
+	bool getSelected() {
+		return selected;
+	}
+
+	vec3 getColor() {
+		if (selected)
+			return SelectColor;
+
+		return color;
+	}
+
+	vec3 GetEquation() {
+		return equation;
+	}
+
+	virtual float CalcDistance(vec2 point) = 0;
+
+	bool Pick(float cX, float cY) {
+		if (selected)
+			return false;
+
+		vec4 wPoint4 = vec4(cX, cY, 0, 1) * camera->Pinv() * camera->Vinv();
+		vec2 point = vec2(wPoint4.x, wPoint4.y);
+		float absVal = CalcDistance(point);
+
+		if (absVal <= 0.1f) {
+			selected = true;
+		}
+
+		return selected;
+	}
+
+};
+
 class ControlPoint {
 private:
 	bool selected;
 	vec2 wPos;
-	vec3 nColor;
 public:
-	ControlPoint(vec2 pos, vec3 color) {
-		selected = false;
-		nColor = color;
-		wPos = pos;
-		//vec4 position = vec4(pos.x,pos.y,0,1) * camera->Pinv() * camera->Vinv();
-		//wPos = vec2(position.x, position.y);
-	}
+	ControlPoint(vec2 pos, vec3 color) : selected(false),wPos(pos) {}
 
 	vec2 getPosition() {
 		return wPos;
@@ -138,15 +176,11 @@ public:
 	}
 };
 
-class Line {
+class Line : public Object{
 private:
 	unsigned int vaoLine;
 	unsigned int vboLine[2];
-	vec3 color;
 	ControlPoint* wPointA, * wPointB;
-	vec3 equation;
-	std::vector<vec2> points = std::vector<vec2>();
-	bool selected;
 
 	void CalcPoints() {
 		points.clear();
@@ -168,22 +202,15 @@ private:
 	}
 
 public:
-	std::vector<vec2> getPoints() {
-		return points;
-	}
 
-	Line(ControlPoint* A, ControlPoint* B, vec3 col) {
-		selected = false;
-		color = col;
-		wPointA = A;
-		wPointB = B;
+	Line(ControlPoint* A, ControlPoint* B): Object(LineColor,false),wPointA(A),wPointB(B){
 		vec2 a = A->getPosition();
 		vec2 b = B->getPosition();
 		vec2 ab = b - a;
 		vec2 normal = vec2(-ab.y, ab.x);
 		float point = normal.x * b.x + normal.y * b.y;
-
 		equation = vec3(normal.x, normal.y, point);
+
 		CalcPoints();
 		this->Create();
 	}
@@ -215,55 +242,25 @@ public:
 		glBindBuffer(GL_ARRAY_BUFFER, vboLine[1]);
 		glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(vec3), &colors[0], GL_STATIC_DRAW);
 		glDrawArrays(GL_LINES, 0, endPoints.size());
-
-
 	}
 
-	bool Pick(float cX, float cY) {
-		if (selected) return false;
-
-		vec4 wPoint4 = vec4(cX, cY, 0, 1) * camera->Pinv() * camera->Vinv();
-		float val2 = powf(equation.x * wPoint4.x + equation.y * wPoint4.y - equation.z,2.0f);
+	float CalcDistance(vec2 point) {
+		float nxX = equation.x * point.x;
+		float nyY = equation.y * point.y;
+		float val = nxX + nyY - equation.z;
+		float val2 = val * val;
 		float absVal = sqrtf(val2);
 
-		if (absVal <= 0.1f) {
-			printf("absval: %f", absVal);
-			selected = true;
-		}
-
-		return selected;
+		return absVal;
 	}
-
-	void setSelected(bool val) {
-		selected = val;
-	}
-
-	bool getSelected() {
-		return selected;
-	}
-
-	vec3 getColor() {
-		if (selected) return SelectColor;
-
-		return LineColor;
-	}
-
-	vec3 GetEquation() {
-		return equation;
-	}
-
 };
 
-class Circle {
+class Circle :public Object{
 private:
 	unsigned int vaoCircle;
 	unsigned int vboCircle[2];
 	ControlPoint* wCenterPoint;
 	float Radius;
-	bool selected;
-	vec3 equation;
-	vec3 color;
-	std::vector<vec2> points;
 
 	void CalcPoints() {
 		int numofIteration = 300;
@@ -279,18 +276,11 @@ private:
 	}
 public:
 
-	std::vector<vec2> getPoints() {
-		return points;
-	}
-
-	Circle(ControlPoint* center, float R) {
-		selected = false;
-		color = CircleColor;
-		wCenterPoint = center;
+	Circle(ControlPoint* center, float R):Object(CircleColor,false),wCenterPoint(center),Radius(R){
 		vec2 wCenter = center->getPosition();
-		Radius = R;
 		float R2 = R * R;
 		equation = vec3(wCenter.x, wCenter.y, R2);
+
 		this->Create();
 		this->CalcPoints();
 	}
@@ -322,47 +312,18 @@ public:
 
 	}
 
-	bool Pick(float cX, float cY) {
-		if (selected) return false;
-
-		vec4 wPoint4 = vec4(cX, cY, 0, 1) * camera->Pinv() * camera->Vinv();
-		float xu = wPoint4.x - equation.x;
-		float yv = wPoint4.y - equation.y;
-		float val2 = powf(((xu * xu) + (yv * yv) - equation.z),2.0f);
+	float CalcDistance(vec2 point) {
+		float xu = point.x - equation.x;
+		float yv = point.y - equation.y;
+		float val2 = powf(((xu * xu) + (yv * yv) - equation.z), 2.0f);
 		float absVal = sqrtf(val2);
 
-		if (absVal <= 0.1f) {
-			printf("absval Circle: %f", absVal);
-			selected = true;
-			color = SelectColor;
-			return true;
-		}
-
-		return false;
-	}
-
-	void setSelected(bool val) {
-		selected = val;
-	}
-
-	bool getSelected() {
-		return selected;
-	}
-
-	vec3 getColor() {
-		if (selected) return SelectColor;
-
-		return CircleColor;
-	}
-
-	vec3 GetEquation() {
-		return equation;
+		return absVal;
 	}
 };
 
 class Paper {
 private: 
-	vec2 wSize;
 	unsigned int vao;
 	unsigned int vboControlPoints[2];
 	std::vector<ControlPoint*> controlPoints;
@@ -385,6 +346,7 @@ public:
 	std::vector<Line*> selectedLines;
 	std::vector<Circle*> selectedCircles;
 	int selectedObjects=0;
+
 	Paper(vec2 size) {
 		float cX = windowWidth / windowWidth - 1;	
 		float cY = 1.0f - windowWidth / windowHeight;
@@ -392,13 +354,13 @@ public:
 
 		vec4 center4 = vec4(cX, cY, 0, 1) * camera->Pinv()*camera->Vinv();
 		vec4 center2Right4 = center4;
-		center2Right4.x += 1.0f;//vec4(cX+1.0f, cY, 0, 1) * camera->Pinv()*camera->Vinv();
-		wSize = size;
+		center2Right4.x += 1.0f;
+
 		ControlPoint* centerPoint = new ControlPoint(vec2(center4.x,center4.y), PointColor);
 		ControlPoint* rightOne = new ControlPoint(vec2(center2Right4.x, center2Right4.y), PointColor);
 		controlPoints.push_back(centerPoint);
 		controlPoints.push_back(rightOne);
-		lines.push_back(new Line(centerPoint, rightOne, LineColor));
+		lines.push_back(new Line(centerPoint, rightOne));
 		this->Create();
 	}
 
@@ -429,9 +391,10 @@ public:
 
 		std::vector<vec2> points = std::vector<vec2>();
 		std::vector<vec3> colors = std::vector<vec3>();
-		for (int i = 0; i < controlPoints.size(); i++) {
-			points.push_back(controlPoints[i]->getPosition());
-			colors.push_back(controlPoints[i]->getColor());
+		for each (ControlPoint * point in controlPoints)
+		{
+			points.push_back(point->getPosition());
+			colors.push_back(point->getColor());
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vboControlPoints[0]);
@@ -452,11 +415,8 @@ public:
 				selectedPoints.push_back(cPoint);
 			}
 		}
-
-		glutPostRedisplay();
 	}
 
-	//TODO: megvizsgálni miért nem intersectel és több elem kiválasztása ?!
 	void SelectObject(float cX, float cY) {
 		for each (Line * line in lines) {
 			if(!line->getSelected())
@@ -510,29 +470,19 @@ public:
 
 	void Intersect(Line* line1, Line* line2) {
 		std::vector<vec2> points = line2->getPoints();
-		vec3 equation = line1->GetEquation();
-
-		for (int i = 0; i < points.size(); i++) {
-			float nxX = equation.x * points[i].x;
-			float nyY = equation.y * points[i].y;
-			float val = nxX + nyY - equation.z;
-			float val2 = val * val;
-			float absVal = sqrtf(val2);
-
+		for each (vec2 point in points)
+		{
+			float absVal = line1->CalcDistance(point);
 			if (absVal <= 0.02f)
-				AddControlPoint(points[i]);
+				AddControlPoint(point);
 		}
 	}
 
 	void Intersect(Line* line, Circle* circle) {
-		vec3 equation2 = line->GetEquation();
 		std::vector<vec2> points = circle->getPoints();
-
 		for each (vec2 point in points)
 		{
-			float val2 = powf((equation2.x * point.x) + (equation2.y * point.y) - equation2.z, 2.0f);
-			float absVal = sqrtf(val2);
-
+			float absVal = line->CalcDistance(point);
 			if (absVal <= 0.02f) {
 				AddControlPoint(point);
 			}
@@ -540,27 +490,19 @@ public:
 	}
 
 	void Intersect(Circle* circle1, Circle* circle2) {
-		vec3 equation2 = circle2->GetEquation();
 		std::vector<vec2> points = circle1->getPoints();
 		for each (vec2 point in points)
 		{
-			float xu = point.x - equation2.x;
-			float yv = point.y - equation2.y;
-			float val2 = powf(((xu * xu) + (yv * yv) - equation2.z), 2.0f);
-			float absVal = sqrtf(val2);
-
+			float absVal = circle2->CalcDistance(point);
 			if (absVal <= 0.02f) {
 				AddControlPoint(point);
 			}
-
 		}
 	}
 
 };
 
-
 Paper* paper;
-
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
@@ -590,23 +532,16 @@ void onKeyboard(unsigned char key, int pX, int pY) {
 	if (key == 'c') paper->DrawingState = 'c';
 	if (key == 'l') paper->DrawingState = 'l';
 	if (key == 'i') paper->DrawingState = 'i';
-	if (key == 'd') glutPostRedisplay();   // if d, invalidate display, i.e. redraw
 
 	paper->ClearSelection();
 	printf("Selected State: %c \n", paper->DrawingState);
 }
 
 // Key of ASCII code released
-void onKeyboardUp(unsigned char key, int pX, int pY) {
-}
+void onKeyboardUp(unsigned char key, int pX, int pY) {}
 
 // Move mouse with key pressed
-void onMouseMotion(int pX, int pY) {	// pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
-	// Convert to normalized device space
-	float cX = 2.0f * pX / windowWidth - 1;	// flip y axis
-	float cY = 1.0f - 2.0f * pY / windowHeight;
-	printf("Mouse moved to (%3.2f, %3.2f)\n", cX, cY);
-}
+void onMouseMotion(int pX, int pY) {}
 
 // Mouse click event
 void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel coordinates of the cursor in the coordinate system of the operation system
@@ -618,54 +553,50 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 	case GLUT_DOWN:
 		switch (paper->DrawingState) {
 		case 's':
-			if (paper->selectedPoints.size() == 2)
-				paper->ClearSelection();
+				if (paper->selectedPoints.size() == 2)
+					paper->ClearSelection();
 
-			paper->SelectPoint(cX,cY);
-			if (paper->selectedPoints.size() == 2) {
-				vec2 section = paper->selectedPoints[0]->getPosition() - paper->selectedPoints[1]->getPosition();
-				paper->Distance = length(section);
-				printf("Distance Taken: %f", paper->Distance);
-			}
-			glutPostRedisplay();
+				paper->SelectPoint(cX,cY);
+				if (paper->selectedPoints.size() == 2) {
+					vec2 section = paper->selectedPoints[0]->getPosition() - paper->selectedPoints[1]->getPosition();
+					paper->Distance = length(section);
+				}
+				glutPostRedisplay();
 			break;
 		case 'c':
-			if (paper->Distance >= 0) {
-				paper->SelectPoint(cX, cY);
-				if (paper->selectedPoints.size() == 1) {
-					paper->AddCircle(new Circle(paper->selectedPoints[0], paper->Distance));
-					paper->ClearSelection();
-					glutPostRedisplay();
+				if (paper->Distance >= 0) {
+					paper->SelectPoint(cX, cY);
+					if (paper->selectedPoints.size() == 1) {
+						paper->AddCircle(new Circle(paper->selectedPoints[0], paper->Distance));
+						paper->ClearSelection();
+						glutPostRedisplay();
+					}
 				}
-			}
 			break;
 		case 'i':
-			paper->SelectObject(cX, cY);
+				paper->SelectObject(cX, cY);
+				if (paper->selectedObjects == 2) {
 
-			if (paper->selectedObjects == 2) {
-
-				if (paper->selectedLines.size() == 1) {
-					paper->Intersect(paper->selectedLines[0], paper->selectedCircles[0]);
+					if (paper->selectedLines.size() == 1) {
+						paper->Intersect(paper->selectedLines[0], paper->selectedCircles[0]);
+					}
+					else if (paper->selectedLines.size() == 0) {
+						paper->Intersect(paper->selectedCircles[0], paper->selectedCircles[1]);
+					}
+					else {
+						paper->Intersect(paper->selectedLines[0], paper->selectedLines[1]);
+					}
+					paper->ClearSelection();
 				}
-				else if (paper->selectedLines.size() == 0) {
-					paper->Intersect(paper->selectedCircles[0], paper->selectedCircles[1]);
-				}
-				else {
-					paper->Intersect(paper->selectedLines[0], paper->selectedLines[1]);
-				}
-				paper->ClearSelection();
-			}
-			glutPostRedisplay();
+				glutPostRedisplay();
 			break;
 		case 'l':
-			paper->SelectPoint(cX, cY);
-
-			if (paper->selectedPoints.size() == 2) {
-				paper->AddLine(new Line(paper->selectedPoints[0], paper->selectedPoints[1], LineColor));
-				paper->ClearSelection();
-			}
-			glutPostRedisplay();
-
+				paper->SelectPoint(cX, cY);
+				if (paper->selectedPoints.size() == 2) {
+					paper->AddLine(new Line(paper->selectedPoints[0], paper->selectedPoints[1]));
+					paper->ClearSelection();
+				}
+				glutPostRedisplay();
 			break;
 		}
 	break;
@@ -673,6 +604,4 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 }
 
 // Idle event indicating that some time elapsed: do animation here
-void onIdle() {
-	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
-}
+void onIdle() {}
