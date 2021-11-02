@@ -152,7 +152,9 @@ private:
 		points.clear();
 		float x = -5.0f;
 		float y;
-		for (int i = 0; i < 110; i++)
+		float numofTesselation = 400.0f;
+		float scale = 10.0f / numofTesselation;
+		for (int i = 0; i < numofTesselation; i++)
 		{
 			if (equation.y != 0) {
 				y = (equation.z - (equation.x * x)) / equation.y;
@@ -161,7 +163,7 @@ private:
 				y = 0;
 			}
 			points.push_back(vec2(x, y));
-			x += i* 0.1f;
+			x += scale;
 		}
 	}
 
@@ -199,8 +201,6 @@ public:
 	}
 
 	void Draw() {
-		mat4 MVP = camera->P() * camera->V();
-		gpuProgram.setUniform(MVP, "MVP");
 		std::vector<vec3> colors;
 		std::vector<vec2> endPoints;
 		endPoints.push_back(points[0]);
@@ -266,7 +266,7 @@ private:
 	std::vector<vec2> points;
 
 	void CalcPoints() {
-		int numofIteration = 100;
+		int numofIteration = 300;
 		vec2 center = wCenterPoint->getPosition();
 
 		for (size_t i = 0; i < numofIteration; i++)
@@ -416,14 +416,15 @@ public:
 	}
 
 	void Draw() {
+		mat4 MVP = camera->P() * camera->V();
+		gpuProgram.setUniform(MVP, "MVP");
+
 		for each (Circle * circle in circles)
 			circle->Draw();
 		
 		for each (Line * line in lines)
 			line->Draw();
 
-		mat4 MVP = camera->P() * camera->V();
-		gpuProgram.setUniform(MVP, "MVP");
 		glBindVertexArray(this->vao);
 
 		std::vector<vec2> points = std::vector<vec2>();
@@ -458,17 +459,21 @@ public:
 	//TODO: megvizsgálni miért nem intersectel és több elem kiválasztása ?!
 	void SelectObject(float cX, float cY) {
 		for each (Line * line in lines) {
-			if (line->Pick(cX, cY)) {
-				this->selectedObjects++;
-				selectedLines.push_back(line);
-			}
+			if(!line->getSelected())
+				if (line->Pick(cX, cY)) {
+					this->selectedObjects++;
+					selectedLines.push_back(line);
+					return;
+				}
 		}
 
 		for each (Circle * circle in circles) {
-			if (circle->Pick(cX, cY)) {
-				this->selectedObjects++;
-				selectedCircles.push_back(circle);
-			}
+			if (!circle->getSelected())
+				if (circle->Pick(cX, cY)) {
+					this->selectedObjects++;
+					selectedCircles.push_back(circle);
+					return;
+				}
 		}
 	}
 
@@ -514,7 +519,7 @@ public:
 			float val2 = val * val;
 			float absVal = sqrtf(val2);
 
-			if (absVal <= 0.05f)
+			if (absVal <= 0.02f)
 				AddControlPoint(points[i]);
 		}
 	}
@@ -528,7 +533,7 @@ public:
 			float val2 = powf((equation2.x * point.x) + (equation2.y * point.y) - equation2.z, 2.0f);
 			float absVal = sqrtf(val2);
 
-			if (absVal <= 0.05f) {
+			if (absVal <= 0.02f) {
 				AddControlPoint(point);
 			}
 		}
@@ -544,7 +549,7 @@ public:
 			float val2 = powf(((xu * xu) + (yv * yv) - equation2.z), 2.0f);
 			float absVal = sqrtf(val2);
 
-			if (absVal <= 0.05f) {
+			if (absVal <= 0.02f) {
 				AddControlPoint(point);
 			}
 
