@@ -18,8 +18,8 @@
 //
 // NYILATKOZAT
 // ---------------------------------------------------------------------------------------------
-// Nev    : 
-// Neptun : 
+// Nev    : Nagy Erik
+// Neptun : ILF5H9
 // ---------------------------------------------------------------------------------------------
 // ezennel kijelentem, hogy a feladatot magam keszitettem, es ha barmilyen segitseget igenybe vettem vagy
 // mas szellemi termeket felhasznaltam, akkor a forrast es az atvett reszt kommentekben egyertelmuen jeloltem.
@@ -34,81 +34,390 @@
 #include "framework.h"
 
 // vertex shader in GLSL: It is a Raw string (C++11) since it contains new line characters
-const char * const vertexSource = R"(
-	#version 330				// Shader 3.3
-	precision highp float;		// normal floats, makes no difference on desktop computers
+const char* vertexSource = R"(
+	#version 330
+    precision highp float;
 
-	uniform mat4 MVP;			// uniform variable, the Model-View-Projection transformation matrix
-	layout(location = 0) in vec2 vp;	// Varying input: vp = vertex position is expected in attrib array 0
+	layout(location = 0) in vec2 cVertexPosition;	// Attrib Array 0
+	out vec2 texcoord;
 
 	void main() {
-		gl_Position = vec4(vp.x, vp.y, 0, 1) * MVP;		// transform vp from modeling space to normalized device space
+		texcoord = (cVertexPosition + vec2(1, 1))/2;							// -1,1 to 0,1
+		gl_Position = vec4(cVertexPosition.x, cVertexPosition.y, 0, 1); 		// transform to clipping space
 	}
 )";
+
 
 // fragment shader in GLSL
-const char * const fragmentSource = R"(
-	#version 330			// Shader 3.3
-	precision highp float;	// normal floats, makes no difference on desktop computers
-	
-	uniform vec3 color;		// uniform variable, the color of the primitive
-	out vec4 outColor;		// computed color of the current pixel
+const char* fragmentSource = R"(
+	#version 330
+    precision highp float;
+
+	uniform sampler2D textureUnit;
+	in  vec2 texcoord;			// interpolated texture coordinates
+	out vec4 fragmentColor;		// output that goes to the raster memory as told by glBindFragDataLocation
 
 	void main() {
-		outColor = vec4(color, 1);	// computed color is the color of the primitive
+		fragmentColor = texture(textureUnit, texcoord); 
 	}
 )";
 
+struct Material {
+	vec3 ka, kd, ks;
+	float  shininess;
+	Material(vec3 _kd, vec3 _ks, float _shininess) : ka(_kd* M_PI), kd(_kd), ks(_ks) { shininess = _shininess; }
+};
+
+struct Hit {
+	float t;
+	vec3 position, normal;
+	Material* material;
+	Hit() { t = -1; }
+};
+
+struct Ray {
+	vec3 start, dir;
+	Ray(vec3 _start, vec3 _dir) { start = _start; dir = normalize(_dir); }
+};
+
+class Intersectable {
+protected:
+	Material* material;
+	mat4 Transform;
+public:
+	virtual Hit intersect(const Ray& ray) = 0;
+};
+
+struct Sphere : public Intersectable {
+	vec3 center;
+	float radius;
+	mat4 TransformMatrix;
+	Sphere(const vec3& _center, float _radius, Material* _material, mat4 _Transformation) {
+		center = _center;
+		radius = _radius;
+		material = _material;
+		TransformMatrix = _Transformation;
+	}
+
+	Hit intersect(const Ray& ray) {
+		Hit hit;
+		vec3 dist = ray.start - center;
+		float a = dot(ray.dir, ray.dir);
+		float b = dot(dist, ray.dir) * 2.0f;
+		float c = dot(dist, dist) - radius * radius;
+		float discr = b * b - 4.0f * a * c;
+		if (discr < 0) return hit;
+		float sqrt_discr = sqrtf(discr);
+		float t1 = (-b + sqrt_discr) / 2.0f / a;	// t1 >= t2 for sure
+		float t2 = (-b - sqrt_discr) / 2.0f / a;
+		if (t1 <= 0) return hit;
+		hit.t = (t2 > 0) ? t2 : t1;
+		hit.position = ray.start + ray.dir * hit.t;
+		hit.normal = (hit.position - center) * (1.0f / radius);
+		hit.material = material;
+		return hit;
+	}
+};
+
+struct Quadrics :public Intersectable {
+protected:
+	 mat4 Q;
+	 mat4 Transformation;
+	 float zmin, zmax;
+	 bool forClose;
+	 mat4 Object;
+public:
+
+	Quadrics(mat4 _Q, float _zmin, float _zmax, mat4 transform, Material* _material, mat4 _Oject = mat4(), bool _forClosing=false) {
+		forClose = _forClosing;
+		Object = _Oject;
+		Q = _Q;
+		Transformation = transform;
+		zmin = _zmin;
+		zmax = _zmax;
+		material = _material;
+	}
+
+	float f(vec4 r) {//feltételezve hogy r.w =1
+		return dot(r*Q,r);
+	}
+
+	//gradf = normál vektro implicit felületeknél
+	vec3 gradf(vec4 r) {
+		vec4 g = r * Q * 2;
+		return vec3(g.x, g.y, g.z);
+	}
+
+	vec3 gradf(vec4 r, mat4 Mat) {
+		vec4 g = r * Mat * 2;
+		return vec3(g.x, g.y, g.z);
+	}
+
+	Hit intersect(const Ray& ray) {
+		Hit hit;
+		vec4 d0 = vec4(ray.dir.x, ray.dir.y, ray.dir.z, 0);
+		vec4 s1 = vec4(ray.start.x, ray.start.y, ray.start.z, 1);
+		float a = dot(d0 * Q, d0);
+		float b = dot(s1 * Q, d0) * 2;
+		float c = dot(s1 * Q, s1);
+		float b2 = b * b;
+		float discr = b2 - 4.0f * a * c;
+
+		if (discr < 0) return hit; // nem taálálta el a fénysugár
+
+		float sqrt_discr = sqrtf(discr);
+		float t1 = (-b + sqrt_discr) / 2.0f / a;	// t1 >= t2 for sure
+		vec3 p1 = ray.start + ray.dir * t1;
+		mat4 Qplane;
+		if (p1.z <zmin || p1.z>zmax) t1 = -1.0f; // t1 kivul esik a hengeren, de a lapokon még rajta lehet 
+
+		float t2 = (-b - sqrt_discr) / 2.0f / a;
+		vec3 p2 = ray.start + ray.dir * t2;
+		if (p2.z <zmin || p2.z>zmax) t2 = -1.0f;
+
+		if (t1 <= 0 && t2 <= 0) return hit;
+		if (t1 <= 0)hit.t = t2;
+		else if (t2 <= 0) hit.t = t1;
+		else if (t2 < t1) hit.t = t2;
+		else hit.t = t1;
+
+		hit.position = ray.start + ray.dir * hit.t;
+		if (forClose) {
+			vec4 p4 = vec4(hit.position.x, hit.position.y, hit.position.z, 1);
+			float val = dot(p4 * Object, p4);
+			if (val > 0)
+				return Hit();
+		}
+
+		hit.normal = normalize(this->gradf(vec4(hit.position.x, hit.position.y, hit.position.z, 1)));
+		hit.material = material;
+
+		return hit;
+	}
+};
+
+
+class Camera {
+	vec3 eye, lookat, right, up;
+	float fov;
+public:
+	void set(vec3 _eye, vec3 _lookat, vec3 vup, float _fov) {
+		fov = _fov;
+		eye = _eye;
+		lookat = _lookat;
+		vec3 w = eye - lookat;
+		float focus = length(w);
+		right = normalize(cross(vup, w)) * focus * tanf(fov / 2);
+		up = normalize(cross(w, right)) * focus * tanf(fov / 2);
+	}
+	Ray getRay(int X, int Y) {
+		vec3 dir = lookat + right * (2.0f * (X + 0.5f) / windowWidth - 1) + up * (2.0f * (Y + 0.5f) / windowHeight - 1) - eye;
+		return Ray(eye, dir);
+	}
+
+	void Animate(float dt) {
+		vec3 d = eye - lookat;
+		eye.y = eye.y - dt;
+		set(eye, lookat, up, fov);
+	}
+};
+
+struct Light {
+	vec3 direction;
+	vec3 Le;
+	Light(vec3 _direction, vec3 _Le) {
+		direction = normalize(_direction);
+		Le = _Le;
+	}
+};
+
+float rnd() { return (float)rand() / RAND_MAX; }
+
+const float epsilon = 0.0001f;
+
+class Scene {
+	std::vector<Intersectable*> objects;
+	std::vector<Light*> lights;
+	Camera camera;
+	vec3 La;
+	vec3 La2;
+public:
+	void Animate(float val) {
+		camera.Animate(val);
+	}
+	void build() {//kozelre : 0.5,-2, 1.8
+					//10,0,7
+		vec3 eye = vec3(10, 0, 7), vup = vec3(0,0,1), lookat = vec3(0,1, 0);
+		float fov = 45 * M_PI / 180;
+		camera.set(eye, lookat, vup, fov);
+
+		La = vec3(0.5f, 0.5f, 0.5f);
+		La2 = vec3(0.5f, 0.5f, 0.5f);
+		vec3 lightDirection(10, 10, 2), Le(1, 1, 1);
+		lights.push_back(new Light(lightDirection, Le));
+
+		vec3 kd(0.2f, 0.2f, 0.2f), ks(2, 2, 2);
+		vec3 kd2(0.1f, 0.1f, 0.1f), ks2(2, 2, 2);
+		Material* lamp = new Material(kd, ks, 50);
+		Material* ground = new Material(kd2, ks2, 50);
+
+
+		//TODO: megcsinálni úgy, hogy a középpontban összehozzuk az elemet majd eltoljuk a megfelelõ pozíciókba, ezután a forgatás megvalósítása
+		//hogyan kellene: az intersectable elemeket lehessen transzformálni és arrébb vinni, minden transzformációnak kell az inverze illetve
+		//minden tarnszformáció öröklõdik egy alul lévõ transzformáciióból
+
+		float zmin = 1.0f;
+		float zmax = 1.2f;
+		float a11 = 2.2f;
+		float correction = 0.05f;
+		float fedlap = (-1.0f / zmax) + 0.135f;
+		mat4 plane = ScaleMatrix(vec3(0.0f, 0.0f, -1.0f));
+		mat4 plane2 = ScaleMatrix(vec3(0.0f, 0.0f, fedlap));
+		mat4 cylinder = mat4(a11, 0, 0, 0,
+							 0, a11, 0, 0,
+							 0, 0, 0, 0,
+							 0, 0, 0, -1);
+
+		mat4 paraboloid = mat4(a11*20, 0, 0, 0,
+								0, a11*20, 0, 0,
+								0, 0, -1, 0,
+								0, 0, 0, 1);
+
+		float R = 0.1f;
+		float firstHeight = zmax + R-correction;
+		objects.push_back(new Quadrics(plane,0,3.0f,mat4(),ground));//alap
+		objects.push_back(new Quadrics(cylinder,zmin,zmax,mat4(),lamp));//lámpa talpzata
+		objects.push_back(new Quadrics(plane2, 0, 3.0f, mat4(), lamp,cylinder,true));//takarólap
+		objects.push_back(new Sphere(vec3(0.0f,0.0f,firstHeight),R,lamp,mat4()));//csuklógömb
+
+		float secondheight = firstHeight + R-correction;
+		float beamLength = 1.0f;
+		float bellSize = 1.0f;
+		mat4 beam = mat4(a11 * 100.0f, 0, 0, 0,
+						 0, a11 * 100.0f, 0, 0,
+						 0, 0, 0, 0,
+						 0, 0, 0, -1);
+
+		float thirdHeight = secondheight+beamLength+R- correction;
+		objects.push_back(new Quadrics(beam, secondheight, secondheight+beamLength, mat4(), lamp));//1.rud
+		objects.push_back(new Sphere(vec3(0.0f, 0.0f, thirdHeight), R, lamp,mat4()));//2.gombcsuklo
+		float fourthHeight = thirdHeight + R-correction;
+		objects.push_back(new Quadrics(beam, fourthHeight, fourthHeight + beamLength, mat4(), lamp));//2.rud
+		float fifth = fourthHeight + beamLength - correction;
+		objects.push_back(new Sphere(vec3(0.0f, 0.0f, fifth), R, lamp,mat4()));//3.gombcsuklo
+		float sixth = fifth + R - correction;
+		//objects.push_back(new Quadrics(paraboloid, 0, sixth + bellSize, mat4(), lamp));//bura
+		//lights.push_back(new Light(vec3(0, 0, sixth+2.0f),La2));
+		//objects.push_back(new Paraboloid(-1.0f, -1.0f, lamp, 0.0f,3.0f));
+		//objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f, material));
+	}
+
+	void render(std::vector<vec4>& image) {
+		for (int Y = 0; Y < windowHeight; Y++) {
+#pragma omp parallel for
+			for (int X = 0; X < windowWidth; X++) {
+				vec3 color = trace(camera.getRay(X, Y));
+				image[Y * windowWidth + X] = vec4(color.x, color.y, color.z, 1);
+			}
+		}
+	}
+
+	Hit firstIntersect(Ray ray) {
+		Hit bestHit;
+		for (Intersectable* object : objects) {
+			Hit hit = object->intersect(ray); //  hit.t < 0 if no intersection
+			if (hit.t > 0 && (bestHit.t < 0 || hit.t < bestHit.t))  bestHit = hit;
+		}
+		if (dot(ray.dir, bestHit.normal) > 0) bestHit.normal = bestHit.normal * (-1);
+		return bestHit;
+	}
+
+	bool shadowIntersect(Ray ray) {	// for directional lights
+		for (Intersectable* object : objects) if (object->intersect(ray).t > 0) return true;
+		return false;
+	}
+
+	vec3 trace(Ray ray, int depth = 0) {
+		Hit hit = firstIntersect(ray);
+		if (hit.t < 0) return La;
+		vec3 outRadiance = hit.material->ka * La;
+		for (Light* light : lights) {
+			Ray shadowRay(hit.position + hit.normal * epsilon, light->direction);
+			float cosTheta = dot(hit.normal, light->direction);
+			if (cosTheta > 0 && !shadowIntersect(shadowRay)) {	// shadow computation
+				outRadiance = outRadiance + light->Le * hit.material->kd * cosTheta;
+				vec3 halfway = normalize(-ray.dir + light->direction);
+				float cosDelta = dot(hit.normal, halfway);
+				if (cosDelta > 0) outRadiance = outRadiance + light->Le * hit.material->ks * powf(cosDelta, hit.material->shininess);
+			}
+		}
+		return outRadiance;
+	}
+};
+
+
 GPUProgram gpuProgram; // vertex and fragment shaders
-unsigned int vao;	   // virtual world on the GPU
+Scene scene;
+
+class FullScreenTexturedQuad {
+	unsigned int vao;	// vertex array object id and texture id
+	Texture texture;
+public:
+	FullScreenTexturedQuad(int windowWidth, int windowHeight, std::vector<vec4>& image)
+		: texture(windowWidth, windowHeight, image)
+	{
+		glGenVertexArrays(1, &vao);	// create 1 vertex array object
+		glBindVertexArray(vao);		// make it active
+
+		unsigned int vbo;		// vertex buffer objects
+		glGenBuffers(1, &vbo);	// Generate 1 vertex buffer objects
+
+		// vertex coordinates: vbo0 -> Attrib Array 0 -> vertexPosition of the vertex shader
+		glBindBuffer(GL_ARRAY_BUFFER, vbo); // make it active, it is an array
+		float vertexCoords[] = { -1, -1,  1, -1,  1, 1,  -1, 1 };	// two triangles forming a quad
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertexCoords), vertexCoords, GL_STATIC_DRAW);	   // copy to that part of the memory which is not modified 
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
+	}
+
+	void Draw() {
+		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
+		gpuProgram.setUniform(texture, "textureUnit");
+		glDrawArrays(GL_TRIANGLE_FAN, 0, 4);	// draw two triangles forming a quad
+	}
+};
+
+FullScreenTexturedQuad* fullScreenTexturedQuad;
 
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
+	scene.build();
 
-	glGenVertexArrays(1, &vao);	// get 1 vao id
-	glBindVertexArray(vao);		// make it active
+	std::vector<vec4> image(windowWidth * windowHeight);
+	long timeStart = glutGet(GLUT_ELAPSED_TIME);
+	scene.render(image);
+	long timeEnd = glutGet(GLUT_ELAPSED_TIME);
+	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));
 
-	unsigned int vbo;		// vertex buffer object
-	glGenBuffers(1, &vbo);	// Generate 1 buffer
-	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	// Geometry with 24 bytes (6 floats or 3 x 2 coordinates)
-	float vertices[] = { -0.8f, -0.8f, -0.6f, 1.0f, 0.8f, -0.2f };
-	glBufferData(GL_ARRAY_BUFFER, 	// Copy to GPU target
-		sizeof(vertices),  // # bytes
-		vertices,	      	// address
-		GL_STATIC_DRAW);	// we do not change later
-
-	glEnableVertexAttribArray(0);  // AttribArray 0
-	glVertexAttribPointer(0,       // vbo -> AttribArray 0
-		2, GL_FLOAT, GL_FALSE, // two floats/attrib, not fixed-point
-		0, NULL); 		     // stride, offset: tightly packed
+	// copy image to GPU as a texture
+	fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
 
 	// create program for the GPU
-	gpuProgram.create(vertexSource, fragmentSource, "outColor");
+	gpuProgram.create(vertexSource, fragmentSource, "fragmentColor");
 }
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	glClearColor(0, 0, 0, 0);     // background color
-	glClear(GL_COLOR_BUFFER_BIT); // clear frame buffer
-
-	// Set color to (0, 1, 0) = green
-	int location = glGetUniformLocation(gpuProgram.getId(), "color");
-	glUniform3f(location, 0.0f, 1.0f, 0.0f); // 3 floats
-
-	float MVPtransf[4][4] = { 1, 0, 0, 0,    // MVP matrix, 
-							  0, 1, 0, 0,    // row-major!
-							  0, 0, 1, 0,
-							  0, 0, 0, 1 };
-
-	location = glGetUniformLocation(gpuProgram.getId(), "MVP");	// Get the GPU location of uniform variable MVP
-	glUniformMatrix4fv(location, 1, GL_TRUE, &MVPtransf[0][0]);	// Load a 4x4 row-major float matrix to the specified location
-
-	glBindVertexArray(vao);  // Draw call
-	glDrawArrays(GL_TRIANGLES, 0 /*startIdx*/, 3 /*# Elements*/);
-
-	glutSwapBuffers(); // exchange buffers for double buffering
+	/*std::vector<vec4> image(windowWidth * windowHeight);
+	long timeStart = glutGet(GLUT_ELAPSED_TIME);
+	scene.render(image);
+	long timeEnd = glutGet(GLUT_ELAPSED_TIME);
+	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));
+	fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
+	*/
+	fullScreenTexturedQuad->Draw();
+	glutSwapBuffers();									// exchange the two buffers
 }
 
 // Key of ASCII code pressed
@@ -149,5 +458,8 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
+	//scene.Animate(0.1f);
 	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	printf("%l",time);
+	glutPostRedisplay();
 }
