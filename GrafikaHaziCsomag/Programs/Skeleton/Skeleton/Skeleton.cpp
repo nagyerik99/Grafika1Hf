@@ -65,7 +65,9 @@ const char* fragmentSource = R"(
 struct Material {
 	vec3 ka, kd, ks;
 	float  shininess;
-	Material(vec3 _kd, vec3 _ks, float _shininess) : ka(_kd* M_PI), kd(_kd), ks(_ks) { shininess = _shininess; }
+	Material(vec3 _kd, vec3 _ks, float _shininess) : ka(_kd* M_PI), kd(_kd), ks(_ks) {
+		shininess = _shininess; 
+	}
 };
 
 struct Hit {
@@ -125,23 +127,24 @@ protected:
 	 mat4 Object;
 	 vec3 translate;
 	 float zmin, zmax;
+	 vec3 plane1, plane2;
 public:
 
 	Quadrics(mat4 _Q, float _zmin, float _zmax, mat4 animation,mat4 inverzAnimation, Material* _material, mat4 _Oject = mat4(), bool _forClosing=false) {
 		forClose = _forClosing;
 		Object = _Oject;
 		Q = _Q;
-		TransformMatrix = animation * TransformMatrix;
-		zmin = _zmin;
-		zmax = _zmax;
+		TransformMatrix = animation;
+		plane1 = vec3(0,0,_zmin);
+		plane2 = vec3(0,0,_zmax);
 		material = _material;
 		translate = translate;
-		InverzMatrix = InverzMatrix * inverzAnimation;
+		InverzMatrix =inverzAnimation;
 		Q = InverzMatrix * Q * transpose(InverzMatrix);
-		zmin = (InverzMatrix * vec4(0, 0, _zmin, 1)).z;
-		zmax = (InverzMatrix * vec4(0, 0, _zmax, 1)).z;
-		rotationAxis = vec3(0, 0, 0);
-		rotationAngle = 0.0f;
+		vec4 plane14 = InverzMatrix * vec4(plane1.x, plane1.y, plane1.z, 1); // maybe le kell osztani a 4. taggal de nem biztos
+		vec4 plane24 = InverzMatrix * vec4(plane2.x, plane2.y, plane2.z, 1); // maybe le kell osztani a 4. taggal de nem biztos
+		plane1 = vec3(plane14.x, plane14.y, plane14.z);
+		plane2 = vec3(plane24.x, plane24.y, plane24.z);
 	}
 
 	float f(vec4 r) {//feltételezve hogy r.w =1
@@ -159,6 +162,7 @@ public:
 		return vec3(g.x, g.y, g.z);
 	}
 
+	//ha az eredmény pozitiv akkor a jó irányban vagyunk
 	Hit intersect(const Ray& ray) {
 		Hit hit;
 		vec4 start4 = vec4(ray.start.x, ray.start.y, ray.start.z, 1);
@@ -176,12 +180,15 @@ public:
 		float sqrt_discr = sqrtf(discr);
 		float t1 = (-b + sqrt_discr) / 2.0f / a;	// t1 >= t2 for sure
 		vec3 p1 = ray.start + ray.dir * t1;
-		mat4 Qplane;
-		if (p1.z <zmin || p1.z>zmax) t1 = -1.0f; // t1 kivul esik a hengeren, de a lapokon még rajta lehet 
+		//float min = plane1.x * p1.x + plane1.y * p1.y + plane1.z * p1.z;
+		//float max = plane2.x * p1.x + plane2.y * p1.y + plane2.z * p1.z;
+		if (p1.z <plane1.z || p1.z >plane2.z) t1 = -1.0f; // t1 kivul esik a hengeren, de a lapokon még rajta lehet 
 
 		float t2 = (-b - sqrt_discr) / 2.0f / a;
 		vec3 p2 = ray.start + ray.dir * t2;
-		if (p2.z <zmin || p2.z>zmax) t2 = -1.0f;
+		//min = plane1.x * p2.x + plane1.y * p2.y + plane1.z * p2.z;
+		//max = plane2.x * p2.x + plane2.y * p2.y + plane2.z * p2.z;
+		if (p2.z < plane1.z || p2.z > plane2.z) t2 = -1.0f;
 
 		if (t1 <= 0 && t2 <= 0) return hit;
 		if (t1 <= 0)hit.t = t2;
@@ -210,6 +217,11 @@ public:
 class Camera {
 	vec3 eye, lookat, right, up;
 	float fov;
+
+	mat4 rotateEyeZaxis(float dt) {
+		return RotationMatrix(dt, vec3(0, 0,1));
+	}
+
 public:
 	void set(vec3 _eye, vec3 _lookat, vec3 vup, float _fov) {
 		fov = _fov;
@@ -227,7 +239,9 @@ public:
 
 	void Animate(float dt) {
 		vec3 d = eye - lookat;
-		eye.y = eye.y - dt;
+		vec4 d4 = vec4(d.x, d.y, d.z, 1);
+		vec4 rotate4 = d4 * rotateEyeZaxis(dt);
+		eye = vec3(rotate4.x, rotate4.y, rotate4.z) + lookat;
 		set(eye, lookat, up, fov);
 	}
 };
@@ -240,8 +254,6 @@ struct Light {
 		Le = _Le;
 	}
 };
-
-float rnd() { return (float)rand() / RAND_MAX; }
 
 const float epsilon = 0.0001f;
 
@@ -258,19 +270,20 @@ public:
 	}
 	void build() {//kozelre : 0.5,-2, 1.8
 					//10,0,7
-		vec3 eye = vec3(5, 3, 7), vup = vec3(0,0,1), lookat = vec3(0,1, 0);
+					//3, 5, 4
+		vec3 eye = vec3(4,4,3), vup = vec3(0,0,1), lookat = vec3(0,0, 2);
 		float fov = 45 * M_PI / 180;
 		camera.set(eye, lookat, vup, fov);
 
-		La = vec3(0.5f, 0.5f, 0.5f);
+		La = vec3(0.3f, 0.3f, 0.3f);
 		La2 = vec3(0.5f, 0.5f, 0.5f);
-		vec3 lightDirection(10, 10, 2), Le(2, 2, 2);
+		vec3 lightDirection(10, -10, 4), Le(1, 1, 1);
 		lights.push_back(new Light(lightDirection, Le));
 
-		vec3 kd(0.1f, 0.07f, 0.1f), ks(1, 1, 1);
-		vec3 kd2(0.1f, 0.1f, 0.1f), ks2(2, 2, 2);
+		vec3 kd(0.13f, 0.1f, 0.15f), ks(1, 1, 1);
+		vec3 kd2(0.1f, 0.18f, 0.15f), ks2(4,4, 4);
 		Material* lampColor = new Material(kd, ks, 120);
-		Material* ground = new Material(kd2, ks2, 50);
+		Material* ground = new Material(kd2, ks2, 200);
 
 		//TODO: megcsinálni úgy, hogy a középpontban összehozzuk az elemet majd eltoljuk a megfelelõ pozíciókba, ezután a forgatás megvalósítása
 		//hogyan kellene: az intersectable elemeket lehessen transzformálni és arrébb vinni, minden transzformációnak kell az inverze illetve
@@ -283,7 +296,7 @@ public:
 		float R = a11/70;
 		//float R = 0.1f;
 		float correction = 0.05f;
-		float fedlap = (-1.0f / zmax /1.1);
+		float fedlap = (-1.0f / zmax/1.1f);
 		//A talpzat az mindig változatlan
 
 #pragma formak
@@ -310,10 +323,6 @@ public:
 			0, 0, 0, 0,
 			0, 0, 0, 1);
 
-		//float R = 0.1f;
-		//TODO matrixos forgatásos faszságot megcsinálni
-
-
 		float beamLength = 0.6f;
 		float bellSize = 0.65f;
 		mat4 Transform = ScaleMatrix(vec3(1, 1, 1));
@@ -328,42 +337,50 @@ public:
 		float bellPosMin = R - correction;
 		float bellPosMax = bellPosMin + bellSize;
 
+		vec4 res = mat4(1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0,
+			1, 2, 3, 1) * vec4(1, 2, 3, 1);
+		printf("%f %f %f %f", res.x, res.y, res.z, res.w);
 
-		//mat4 rotateFirst = RotationMatrix(60, vec3(1, 1, 1));
+
 		lamp.push_back(new Quadrics(plane,0,10.0f,Transform,invT,ground));//alap
 		lamp.push_back(new Quadrics(cylinder,zmin,zmax, Transform,invT, lampColor));//lámpa talpzata
-		lamp.push_back(new Quadrics(plane2, 0, 10.0f, Transform,invT, lampColor,cylinder,true));//takarólap
+		lamp.push_back(new Quadrics(plane2, zmin, 3.0f, Transform,invT, lampColor,cylinder,true));//takarólap
 
 
 		mat4 Joint1Translation = TranslateMatrix(vec3(0, 0, joint1Pos));
 		mat4 Joint1InverzTranslation = TranslateMatrix(vec3(0, 0, -joint1Pos));
-		Transform = Transform * Joint1Translation;
-		invT = invT * Joint1InverzTranslation;
+		mat4 Joint1Rotation = RotationMatrix(M_PI / 6.0f, vec3(1, 0, 0));
+		mat4 Joint1InverzRotation = RotationMatrix(-1.0f * M_PI / 6.0f, vec3(1, 0, 0));
+
+		Transform = /*Joint1Rotation*/ Joint1Translation * Transform;
+		invT = invT * Joint1InverzTranslation /*Joint1InverzRotation*/;
 
 		lamp.push_back(new Quadrics(sphere, 0, 4.0f, Transform, invT, lampColor));
 
 		mat4 Beam1Translation = TranslateMatrix(vec3(0, 0, beam1Min));
 		mat4 Beam1InverzTranslation = TranslateMatrix(vec3(0, 0, -beam1Min));
-		mat4 Beam1Rotation = RotationMatrix(M_PI / 4.0f, vec3(1, 0, 0));
-		mat4 Beam1InverzRotation = RotationMatrix(-1.0f*M_PI / 4.0f, vec3(1, 0, 0));
 		
-		Transform = Transform*Beam1Translation;
+		Transform = Beam1Translation* Transform;
 		invT = invT * Beam1InverzTranslation;
 		lamp.push_back(new Quadrics(beam, joint1Pos+beam1Min, joint1Pos+beam1Max, Transform, invT, lampColor));
 
 		mat4 Joint2Translation = TranslateMatrix(vec3(0, 0, joint2Pos));
 		mat4 Joint2InverzTranslation = TranslateMatrix(vec3(0, 0, -(joint2Pos)));
-		Transform = Joint2Translation * Transform;
-		invT = invT * Joint2InverzTranslation;
+		mat4 Joint2Rotation = RotationMatrix(M_PI / 6.0f, vec3(0, 1, 0));
+		mat4 Joint2InverzRotation = RotationMatrix(-1.0f * M_PI / 6.0f, vec3(0, 1, 0));
+
+
+		Transform = /*Joint2Rotation **/Joint2Translation* Transform;
+		invT = invT * Joint2InverzTranslation;/**Joint2InverzRotation;*/
 
 		lamp.push_back(new Quadrics(sphere, 0, 10.0f, Transform, invT, lampColor));
 
 		mat4 Beam2Translation = TranslateMatrix(vec3(0, 0, beam2Min));
 		mat4 Beam2InverzTranslation = TranslateMatrix(vec3(0, 0, -beam2Min));
-		mat4 Beam2Rotation = RotationMatrix(M_PI / 4.0f, vec3(1, 0, 0));
-		mat4 Beam2InverzRotation = RotationMatrix(-1.0f * M_PI / 4.0f, vec3(1, 0, 0));
 
-		Transform = Transform*Beam2Translation;
+		Transform = Beam2Translation* Transform;
 		invT = invT * Beam2InverzTranslation;
 
 		float zbeam2Min = joint1Pos + beam1Max + beam1Min + R - correction;
@@ -372,95 +389,24 @@ public:
 
 		mat4 Joint3Translation = TranslateMatrix(vec3(0, 0, joint3Pos));
 		mat4 Joint3InverzTranslation = TranslateMatrix(vec3(0, 0, -joint3Pos));
-		Transform = Joint3Translation * Transform;
+		Transform = Joint3Translation* Transform;
 		invT = invT * Joint3InverzTranslation;
 
 		lamp.push_back(new Quadrics(sphere, 0, 10.0f, Transform, invT, lampColor));
 
 		mat4 BellTranslation = TranslateMatrix(vec3(0, 0, bellPosMin));
 		mat4 BellInverzTranslation = TranslateMatrix(vec3(0, 0, -bellPosMin));
-		Transform = BellTranslation * Transform;
+		Transform = BellTranslation* Transform;
 		invT = invT * BellInverzTranslation;
 
 		float zBellMin = joint1Pos + beam1Max + beam2Max + bellPosMin;
 		float zBellMax = joint1Pos + beam1Max + beam2Max + bellPosMin+bellPosMax;
 		lamp.push_back(new Quadrics(paraboloid, zBellMin, zBellMax, Transform, invT, lampColor));
 
-	//	vec4 lightPos = vec4(0, 0, paraFocalDistance, 1) * Transform;
-//		vec4 lightPos = Transform*vec4(0, 0, 0, 1);
-		//lights.push_back(new Light(normalize(vec3(lightPos.x, lightPos.y, lightPos.z)), vec3(2, 2, 2)));
-		
-
-		//lamp.push_back(new Quadrics(sphere,0,10.0f,))
-
-		//lamp.push_back(new Quadrics(sphere, 0, 20.0f, Transform,invT, vec3(0, 0, 0), lampColor));//csuklógömb
-
-		//float secondheight = R - correction;//itt kezdödik a rúd + firstheight kell
-
-		////TODO alakul csak meg kell csinálnom a felezõ síkokat is :D
-		//mat4 eltol2 = TranslateMatrix(vec3(0, 0, firstHeight));
-		//mat4 eltolInverz2 = TranslateMatrix(vec3(0, 0, -secondheight));
-
-		//mat4 rotationMat = RotationMatrix(M_PI/5, vec3(1,0, 0));
-		//mat4 inverzRotationMat = RotationMatrix(-M_PI/5, vec3(1, 0, 0));
-		//
-		///*mat4 animBeam1 =rotationMat *eltol2* eltol;
-		//mat4 inverzAnimBeam1 = eltolInverz *eltolInverz2*inverzRotationMat;
-
-		//float transformedZBeamMin = (inverzAnimBeam1 * vec4(0, 0, zminBeam, 1)).z;
-		//float transformedZBeamMax = (inverzAnimBeam1 * vec4(0, 0, zmaxBeam, 1)).z;*/
-
-		//Transform = rotationMat * eltol2 * Transform;
-		//invT = invT * eltolInverz2 * inverzRotationMat;
-
-		//float zminBeam1 = firstHeight;
-		//float zmaxBeam1 = zminBeam1 + beamLength;
-
-		//lamp.push_back(new Quadrics(beam, 0,beamLength, Transform, invT, vec3(0, 0, 0), lampColor));//1.rud
-		//
-		////float thirdHeight = R-correction;// +(invT * vec4(0, 0, R - correction, 1)).z;;// +beamLength + R - correction;//itt kellene lennie a gömb középpontjának
-		//////thirdHeight = (invT * vec4(0,0,thirdHeight,1)).z;
-
-		//////TODO most jó helyen van bármit is csiáltam 
-		////mat4 eltol3 = TranslateMatrix(vec3(0, 0, thirdHeight));
-		////mat4 eltolInverz3 = TranslateMatrix(vec3(0, 0, -thirdHeight));
-		//////mat4 animJoint2 = eltol3* animBeam1;
-		//////mat4 inverzAnimJoint2 = inverzAnimBeam1* eltolInverz3;
-		////Transform = eltol3 * Transform;
-		////invT = invT * eltolInverz3;
-		////lamp.push_back(new Quadrics(sphere, 0, 10.0f, Transform,invT,vec3(0,0,0), lampColor));//csuklógömb
-
-
-
-		//////float fourthHeight = firstHeight + secondheight;//+thirdHeight;//+(invT * vec4(0, 0, R - correction, 1)).z;
-		//////float fourthHeightTransformed = (inverzAnimJoint2 * vec4(0, 0, fourthHeight, 1)).z;
-		////float fourthHeight = R - correction;
-		////fourthHeight = (invT * vec4(0, 0, fourthHeight, 1)).z;
-
-		////mat4 eltol4 = TranslateMatrix(vec3(0, 0, fourthHeight));
-		////mat4 eltolInverz4 = TranslateMatrix(vec3(0, 0, -fourthHeight));
-		////mat4 rotationMat2 = RotationMatrix(-2*M_PI / 5, vec3(0, 1, 0));
-		////mat4 inverzRotationMat2 = RotationMatrix(2*M_PI / 5, vec3(0, 1, 0));
-
-		////Transform = rotationMat2 *eltol4 * Transform;
-		////invT = invT * eltolInverz4 * inverzRotationMat2;
-
-		////float zminBeam2 = fourthHeight;//+thirdHeight + secondheight + firstHeight;
-		////float zmaxBeam2 = fourthHeight+beamLength+R;//+thirdHeight + secondheight + firstHeight + beamLength;
-
-		////zminBeam2 = (invT * vec4(0, 0, zminBeam2, 1)).z;
-		////zmaxBeam2 = (invT * vec4(0, 0, zmaxBeam2, 1)).z;
-
-		////////objects.push_back(new Sphere(vec3(0.0f, 0.0f, thirdHeight), R, lamp,mat4()));//2.gombcsuklo
-		////lamp.push_back(new Quadrics(beam, zminBeam2, zmaxBeam2, Transform,invT,vec3(0,0,0), lampColor));//2.rud
-		////float fifth = fourthHeight + beamLength - correction;
-		////objects.push_back(new Quadrics(sphere, 0, 10.0f, mat4(), vec3(0, 0, fifth), lamp));//csuklógömb
-		//////objects.push_back(new Sphere(vec3(0.0f, 0.0f, fifth), R, lamp,mat4()));//3.gombcsuklo
-		////float sixth = fifth + R - correction;
-		////objects.push_back(new Quadrics(paraboloid, sixth, bellSize+sixth, mat4(),vec3(0,0,fourthHeight), lamp));//bura
-		////objects.push_back(new Paraboloid(-1.0f, -1.0f, lamp, 0.0f,3.0f));
-		////objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f, material));
-	}
+		//vec4 lightPos = vec4(0, 0, paraFocalDistance, 1) * Transform;
+		//vec4 lightPos = vec4(1, 1, 1);
+		//lights.push_back(new Light(vec3(lightPos.x, lightPos.y, lightPos.z), vec3(1, 1, 1)));
+			}
 
 	void render(std::vector<vec4>& image) {
 		for (int Y = 0; Y < windowHeight; Y++) {
@@ -530,6 +476,10 @@ public:
 		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);     // stride and offset: it is tightly packed
 	}
 
+	void LoadTexture(int windowWidth, int windowHeight,std::vector<vec4> image){
+		texture.create(windowWidth,windowHeight,image);
+	}
+
 	void Draw() {
 		glBindVertexArray(vao);	// make the vao and its vbos active playing the role of the data source
 		gpuProgram.setUniform(texture, "textureUnit");
@@ -538,17 +488,14 @@ public:
 };
 
 FullScreenTexturedQuad* fullScreenTexturedQuad;
-
+std::vector<vec4> image;
 // Initialization, create an OpenGL context
 void onInitialization() {
 	glViewport(0, 0, windowWidth, windowHeight);
 	scene.build();
 
-	std::vector<vec4> image(windowWidth * windowHeight);
-	long timeStart = glutGet(GLUT_ELAPSED_TIME);
-	scene.render(image);
-	long timeEnd = glutGet(GLUT_ELAPSED_TIME);
-	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));
+	/*long timeEnd = glutGet(GLUT_ELAPSED_TIME);
+	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));*/
 
 	// copy image to GPU as a texture
 	fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
@@ -559,13 +506,9 @@ void onInitialization() {
 
 // Window has become invalid: Redraw
 void onDisplay() {
-	/*std::vector<vec4> image(windowWidth * windowHeight);
-	long timeStart = glutGet(GLUT_ELAPSED_TIME);
+	image = std::vector<vec4>(windowWidth * windowHeight);
 	scene.render(image);
-	long timeEnd = glutGet(GLUT_ELAPSED_TIME);
-	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));
-	fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
-	*/
+	fullScreenTexturedQuad->LoadTexture(windowWidth, windowHeight, image);
 	fullScreenTexturedQuad->Draw();
 	glutSwapBuffers();									// exchange the two buffers
 }
@@ -609,7 +552,7 @@ void onMouse(int button, int state, int pX, int pY) { // pX, pY are the pixel co
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
 	//scene.Animate(0.1f);
-	long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
-	printf("%l",time);
+	//long time = glutGet(GLUT_ELAPSED_TIME); // elapsed time since the start of the program
+	//printf("%l",time);
 	glutPostRedisplay();
 }
